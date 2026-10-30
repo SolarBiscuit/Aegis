@@ -1,0 +1,190 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.38'
+}
+
+version = "${minecraft_version}-${mod_version}"
+group = "${mod_group_id}"
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+// Native compression (libdeflate) and encryption (OpenSSL) for Linux/macOS, with Java fallbacks. GPL-3.0.
+// Bundled through Jar-in-Jar (not shaded/relocated: the JNI symbols are bound to the original package names).
+def velocityNativeVersion = '3.4.0'
+
+jarJar.enable()
+
+sourceSets {
+    // Dev-only GameTests; compiled against the mod but never packed into the jar.
+    gametest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+    copyIdeResources = true
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', ''
+            property 'forge.logging.console.level', 'debug'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            // `gradlew runServer -PmixinExport` dumps every transformed class to run/.mixin.out for inspection.
+            if (project.hasProperty('mixinExport')) {
+                property 'mixin.debug.export', 'true'
+            }
+
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        client {
+            // Separate directory, so a dev client and a dev server can run at the same time.
+            workingDirectory project.file('run-client')
+            // `gradlew runClient -PquickJoin=localhost:25599` joins a (dev) server straight away.
+            if (project.hasProperty('quickJoin')) {
+                args '--quickPlayMultiplayer', project.property('quickJoin')
+            }
+        }
+
+        server {
+            args '--nogui'
+        }
+
+        // Headless self-test: `gradlew runGameTestServer` runs src/gametest and exits.
+        gameTestServer {
+            property 'forge.enabledGameTestNamespaces', mod_id
+            mods {
+                "${mod_id}" {
+                    source sourceSets.gametest
+                }
+            }
+        }
+    }
+}
+
+mixin {
+    add sourceSets.main, "${mod_id}.refmap.json"
+    config "${mod_id}.mixins.json"
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'PaperMC'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+        content { includeGroup 'com.velocitypowered' }
+    }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    implementation "com.velocitypowered:velocity-native:${velocityNativeVersion}"
+    minecraftLibrary("com.velocitypowered:velocity-native:${velocityNativeVersion}") { transitive = false }
+    jarJar("com.velocitypowered:velocity-native:[${velocityNativeVersion},4.0)") {
+        transitive = false
+        jarJar.pin(it, velocityNativeVersion)
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            forge_version          : forge_version,
+            forge_version_range    : forge_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties + [project: project]
+    }
+}
+
+def manifestAttributes = [
+        'Specification-Title'     : mod_id,
+        'Specification-Vendor'    : mod_authors,
+        'Specification-Version'   : '1',
+        'Implementation-Title'    : project.name,
+        'Implementation-Version'  : mod_version,
+        'Implementation-Vendor'   : mod_authors,
+        'MixinConfigs'            : "${mod_id}.mixins.json",
+]
+
+tasks.named('jar', Jar).configure {
+    archiveClassifier = 'slim'
+    from('.') { include 'LICENSE', 'NOTICE', 'licenses/**' }
+    manifest { attributes(manifestAttributes) }
+    finalizedBy 'reobfJar'
+}
+
+// The release jar: the mod plus velocity-native nested via Jar-in-Jar.
+tasks.named('jarJar').configure {
+    archiveClassifier = ''
+    from('.') { include 'LICENSE', 'NOTICE', 'licenses/**' }
+    manifest { attributes(manifestAttributes) }
+    finalizedBy 'reobfJarJar'
+}
+
+reobf {
+    jarJar {}
+}
+
+tasks.named('build').configure { dependsOn 'jarJar' }
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+    maxHeapSize = '1g'
+    // RNConfig writes config/ratnetworking.properties into the working directory.
+    def testRun = layout.buildDirectory.dir('test-run').get().asFile
+    workingDir = testRun
+    doFirst { testRun.mkdirs() }
+    systemProperty 'io.netty.leakDetection.level', System.getProperty('ratnetworking.bench') ? 'disabled' : 'paranoid'
+    if (System.getProperty('ratnetworking.bench')) {
+        systemProperty 'ratnetworking.bench', System.getProperty('ratnetworking.bench')
+        testLogging.showStandardStreams = true
+        outputs.upToDateWhen { false }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+// Writes the test runtime classpath to build/test-classpath.txt (used to run the native tests in a Linux container).
+tasks.register('writeTestClasspath') {
+    dependsOn 'testClasses'
+    def out = layout.buildDirectory.file('test-classpath.txt')
+    outputs.file out
+    doLast {
+        out.get().asFile.text = sourceSets.test.runtimeClasspath.files.collect { it.absolutePath }.join('\n')
+    }
+}
