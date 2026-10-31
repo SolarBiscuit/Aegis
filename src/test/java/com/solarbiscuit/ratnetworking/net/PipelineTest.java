@@ -5,9 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Random;
 
 import javax.crypto.Cipher;
@@ -199,6 +201,28 @@ class PipelineTest {
     void streamShorterThanClaimedIsRejected() {
         EmbeddedChannel dec = compressionChannel(256, PacketFlow.CLIENTBOUND);
         assertThrows(DecoderException.class, () -> dec.writeInbound(compressedPacket(5000, compressible(4000))));
+        dec.finishAndReleaseAll();
+    }
+
+    @Test
+    void presetDictionaryStreamIsRejectedInsteadOfSpinning() {
+        // A zlib stream that asks for a preset dictionary (FDICT): Velocity's Java inflate loop made no progress on it
+        // and spun the Netty thread forever.
+        java.util.zip.Deflater d = new java.util.zip.Deflater();
+        d.setDictionary(compressible(64));
+        d.setInput(compressible(4000));
+        d.finish();
+        byte[] out = new byte[8192];
+        int n = d.deflate(out);
+        d.end();
+        ByteBuf packet = Unpooled.buffer();
+        VarInts.write(packet, 4000);
+        packet.writeBytes(out, 0, n);
+
+        EmbeddedChannel dec = compressionChannel(256, PacketFlow.CLIENTBOUND);
+        DecoderException e = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> assertThrows(DecoderException.class, () -> dec.writeInbound(packet)));
+        assertTrue(e.getMessage().contains("preset dictionary"), e.getMessage());
         dec.finishAndReleaseAll();
     }
 

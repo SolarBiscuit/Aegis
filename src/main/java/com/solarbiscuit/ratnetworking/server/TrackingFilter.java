@@ -1,6 +1,5 @@
 package com.solarbiscuit.ratnetworking.server;
 
-import java.util.List;
 import java.util.Set;
 
 import net.minecraft.server.level.ServerPlayer;
@@ -16,6 +15,10 @@ import net.minecraft.world.entity.Entity;
  * away than the server view distance, updatePlayer can only decide "not visible" and then do nothing (it removes the
  * player from a set it is not in), because the range it compares against is min(entity range, view distance * 16).
  * Such calls are skipped here, so the result is exactly vanilla's.
+ * <p>
+ * Camera mods (SecurityCraft cameras, Ars Nouveau scrying, Steam 'n' Rails conductor possession) make updatePlayer
+ * measure from {@code player.getCamera()} instead of the player, so a call is only skipped when the entity is out of
+ * range of both. In vanilla the camera is the player itself (a spectator is moved to the entity it spectates).
  */
 public final class TrackingFilter {
     private TrackingFilter() {
@@ -26,18 +29,20 @@ public final class TrackingFilter {
         if (player == entity) {
             return true;
         }
-        double dx = player.getX() - entity.getX();
-        double dz = player.getZ() - entity.getZ();
         double max = viewDistance * 16.0;
-        return dx * dx + dz * dz > max * max && !seenBy.contains(player.connection);
+        if (!outOfRange(player, entity, max)) {
+            return false;
+        }
+        Entity camera = player.getCamera();
+        if (camera != player && camera != null && !outOfRange(camera, entity, max)) {
+            return false;
+        }
+        return !seenBy.contains(player.connection);
     }
 
-    public static boolean canSkipAll(Entity entity, Set<ServerPlayerConnection> seenBy, List<ServerPlayer> players, int viewDistance) {
-        for (int i = 0, n = players.size(); i < n; i++) {
-            if (!canSkip(entity, seenBy, players.get(i), viewDistance)) {
-                return false;
-            }
-        }
-        return true;
+    private static boolean outOfRange(Entity viewer, Entity entity, double max) {
+        double dx = viewer.getX() - entity.getX();
+        double dz = viewer.getZ() - entity.getZ();
+        return dx * dx + dz * dz > max * max;
     }
 }

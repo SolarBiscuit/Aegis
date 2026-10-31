@@ -63,6 +63,11 @@ public class RNCompressDecoder extends MessageToMessageDecoder<ByteBuf> {
         if (claimed > compressed * Limits.MAX_DEFLATE_RATIO + 64) {
             throw new DecoderException("Badly compressed packet - " + compressed + " compressed bytes cannot inflate to " + claimed);
         }
+        // A zlib stream that asks for a preset dictionary (FLG bit 5) makes no progress in Velocity's Java inflate loop,
+        // which then spins the Netty thread forever. Nothing legitimate (vanilla, Velocity, libdeflate) sends one.
+        if (compressed < 2 || (in.getByte(in.readerIndex() + 1) & 0x20) != 0) {
+            throw new DecoderException("Badly compressed packet - " + (compressed < 2 ? "truncated zlib header" : "preset dictionary"));
+        }
 
         VelocityCompressor c = this.compressor.get();
         ByteBuf source = NativeSupport.ensureCompatible(ctx.alloc(), c, in, false);

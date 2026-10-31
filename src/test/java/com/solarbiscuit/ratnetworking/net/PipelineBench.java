@@ -243,6 +243,23 @@ class PipelineBench {
             }, packets)));
         }
 
+        // Online mode with RatNetworking's cipher off (the default): the zero-copy prepender writes the length header as a
+        // separate buffer, so vanilla's CipherEncoder runs twice per packet. Compared against the copying mode too.
+        Supplier<ChannelHandler> vanillaCipher = () -> {
+            try {
+                Cipher c = Cipher.getInstance("AES/CFB8/NoPadding");
+                c.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(keyBytes));
+                return new CipherEncoder(c);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        Result vanillaFramed = measure(n, encode(() -> new ChannelHandler[]{vanillaCipher.get(), new Varint21LengthFieldPrepender()}, packets));
+        report("prepender (zero-copy) + vanilla AES", vanillaFramed,
+                measure(n, encode(() -> new ChannelHandler[]{vanillaCipher.get(), new RNLengthPrepender(PacketFlow.CLIENTBOUND, true)}, packets)));
+        report("prepender (copying) + vanilla AES", vanillaFramed,
+                measure(n, encode(() -> new ChannelHandler[]{vanillaCipher.get(), new RNLengthPrepender(PacketFlow.CLIENTBOUND, false)}, packets)));
+
         int[] values = new int[1_000_000];
         for (int i = 0; i < values.length; i++) {
             values[i] = RANDOM.nextInt(1 << (1 + RANDOM.nextInt(20)));
