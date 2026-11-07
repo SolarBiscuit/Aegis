@@ -1,11 +1,11 @@
-RatNetworking
+Aegis (formerly Axial and RatNetworking)
 Copyright (C) 2026 SolarBiscuit
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
 License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
 version. See LICENSE.
 
-RatNetworking contains code derived from, or bundles, the following works. Their license texts are in licenses/.
+Aegis contains code derived from, or bundles, the following works. Their license texts are in licenses/.
 
 - Krypton (https://github.com/astei/krypton), Copyright (C) Andrew Steinborn and contributors.
   GNU Lesser General Public License v3.0 (licenses/LICENSE-Krypton-LGPL-3.0.txt).
@@ -23,3 +23,7 @@ RatNetworking contains code derived from, or bundles, the following works. Their
 - velocity-native 3.4.0 (https://github.com/PaperMC/Velocity), Copyright (C) 2018-2023 Velocity Contributors.
   GNU General Public License v3.0. Bundled unmodified as META-INF/jarjar/velocity-native-3.4.0.jar; it contains
   libdeflate (MIT) and links against the system's OpenSSL. Source: https://github.com/PaperMC/Velocity/tree/dev/3.0.0/native
+
+- libdeflate 1.26 (https://github.com/ebiggers/libdeflate), Copyright 2016 Eric Biggers, Copyright 2024 Google LLC.
+  MIT License (licenses/LICENSE-libdeflate-MIT.txt). Bundled unmodified as natives/aegis/windows_x86_64/libdeflate.dll,
+  the official Windows x86_64 build from the v1.26 release (libdeflate-1.26-windows-x86_64-bin.zip).

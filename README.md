@@ -4,93 +4,130 @@
 
 # Aegis
 
-Aegis is a networking mod for Minecraft 1.20.1 on Forge. It combines and fixes the best parts of [Krypton](https://github.com/astei/krypton), [VMP (Very Many Players)](https://github.com/RelativityMC/VMP-fabric) and [Packet Fixer](https://github.com/TonimatasDEV/PacketFixer), and adds server-side connection security that vanilla 1.20.1 does not have. It is vanilla-compatible on the wire: Aegis registers no network channels.
+Network stack optimisations, defect fixes and server-side connection hardening for Minecraft 1.20.1 (Forge 47.x).
 
-> **Optional on either side.** Install it on the server for the full set, and on clients for faster packet handling. A client without Aegis can join an Aegis server and the other way round. Aegis was called RatNetworking and then Axial before 0.5.0.
+Aegis consolidates and corrects the networking changes in [Krypton](https://github.com/astei/krypton), [VMP](https://github.com/RelativityMC/VMP-fabric) and [Packet Fixer](https://github.com/TonimatasDEV/PacketFixer), and adds per-address connection limiting, which vanilla 1.20.1 does not have. It registers no network channels and does not change the protocol.
 
-## Features
+Formerly RatNetworking, then Axial (before 0.5.0).
 
-This is the feature set Aegis will have when its [roadmap](#roadmap) is complete. Items marked † are experimental: each is measured first, ships off by default, and is dropped and reported if it does not pay.
+## Deployment
 
-### Packet pipeline
+Aegis is optional on each side and wire-compatible with vanilla and with Aegis-less peers.
 
-- **Zero-copy frame splitter.** Skips runs of zeros from "nullping" probes and rejects oversized frames from the header alone.
-- **Zero-copy length prepender,** with the header written as its own buffer.
-- **Native compression.** libdeflate through velocity-native on Linux and macOS arm64, and on Windows x64 with Java 22 or newer, libdeflate 1.26 through Java's Foreign Function and Memory API. Everything else uses `java.util.zip`, and any native failure falls back to it with one log line. The compression level is configurable (default 6).
-- **A lookup table for VarInt sizes,** and far less allocation: 83 to 96 % less on the frame decoder and the compression handlers.
+| Side | Components that apply |
+|---|---|
+| Server | All components |
+| Client | Frame decoder and length prepender, compression, packet limits, timeouts, buffer-leak fixes |
+
+Server-only: flush consolidation, entity tracking changes, non-blocking disconnect, connection throttle, offence bans and the block log.
+
+## Components
+
+Items marked † are experimental. Each is benchmarked first, ships disabled, and is removed if it does not pay off.
+
+### Framing and compression
+
+- **Frame decoder.** Replaces `Varint21FrameDecoder`. Emits retained slices of the cumulation buffer instead of copying each frame. Consumes runs of zero-length frames ("nullping") in one pass. Rejects an oversized frame from its length prefix, before buffering the body.
+- **Length prepender.** Writes the length prefix as a separate buffer instead of copying the payload into a new one.
+- **Compression.** libdeflate where available, `java.util.zip` otherwise. Level is configurable (default 6).
+
+  | Platform | Backend |
+  |---|---|
+  | Linux x86_64 / aarch64, macOS arm64 | libdeflate via velocity-native (JNI) |
+  | Windows x64, Java 22+ | libdeflate 1.26 via the FFM API |
+  | Other | `java.util.zip` |
+
+  A native load failure falls back to `java.util.zip` and logs once. `pipeline.natives=false` disables native code.
+- **VarInt size** from a lookup table. Per-packet allocation in the frame decoder and the compression handlers is 83-96 % lower than vanilla.
 
 ### Flushing and the server tick
 
-- **Flush consolidation.** One flush per connection after a level ticks its chunks and entity trackers, instead of one per packet, while still flushing every 64 KiB. A mod that writes without flushing is flushed at the next network tick, so nothing waits.
-- **Non-blocking disconnect** for remote connections.
-- **Entity tracker pre-check** that skips `updatePlayer` calls that can only be no-ops, with exactly vanilla's result, and a **chunk entity lookup** that looks only at the chunk being sent.
-- **Broadcast memoisation†.** Compress a broadcast packet once for all of its receivers, for an allowlist of vanilla packet types. It ships off by default, and only if instrumented counts show redundant compression is a real share of network CPU.
+- **Flush consolidation.** While a level ticks chunks and entity trackers, and during a player's chunk load, flushes on remote connections are held and issued once per connection. Writes are still queued immediately and in order, so only the socket write is batched. A held flush is released early at 64 KiB pending. Writes made without a flush (some mods) are flushed on the next network tick.
+- **Non-blocking disconnect.** `Connection.disconnect` no longer blocks the calling thread on `awaitUninterruptibly()` for remote server-side connections. Client and in-memory connections keep vanilla behaviour.
+- **Entity tracker pre-check.** Skips `ChunkMap.TrackedEntity#updatePlayer` calls that can only be no-ops: the player is not in `seenBy` and, horizontally, both the player and its camera entity are beyond `viewDistance * 16`. Results are identical to vanilla. Measuring from the camera keeps SecurityCraft cameras, Ars Nouveau scrying and Steam 'n' Rails conductor possession working.
+- **Chunk entity lookup.** On chunk send, collects the tracked entities for that chunk from the level's entity sections instead of iterating every tracked entity in the dimension. Vanilla's loop still builds the packets. Falls back to the full scan when called off the server thread or if the lookup fails.
+- **Broadcast memoisation†.** Compresses a broadcast packet once for all recipients, for an allowlist of vanilla packet types. Ships disabled, and only proceeds if instrumentation shows redundant compression is a significant share of network CPU.
 
-### Limits, timeouts and fixes
+### Packet limits, timeouts, defect fixes
 
-- **Packet Fixer's job, done safely.** Clientbound limits of 128 MiB and serverbound 16 MiB only after login, so an unauthenticated connection cannot make the server buffer huge frames. A decompression bomb is capped by direction and by a deflate-ratio check, and decompression must produce exactly the claimed size.
-- **Sensible timeouts.** 120 s read and login timeouts that apply only once a connection logs in, so a dead server in the server list still gives up after vanilla's 30 s.
-- **Connection bug fixes.** Login success can no longer go out uncompressed on a busy socket ("Badly compressed packet"), a native compressor is no longer leaked when a connection closes during setup, and a zlib stream that asks for a preset dictionary no longer spins a network thread at 100 % CPU.
-- **No leaked buffers.** Login queries and custom payloads are copied to heap buffers, and the native memory of replaced deflaters is freed at once.
+- **Packet size limits.** Packet Fixer removes the limits in both directions, which lets an unauthenticated client force the server to buffer up to 2 GiB per connection and to allocate a packet's claimed decompressed size up front. Aegis instead sets:
+
+  | Direction | Limit | Applies |
+  |---|---|---|
+  | Clientbound | 128 MiB | All protocol states (Forge syncs registries during login) |
+  | Serverbound | 16 MiB | PLAY only. HANDSHAKE, STATUS and LOGIN keep vanilla's 2 MiB frame / 8 MiB uncompressed |
+
+- **Decompression.** Rejects a declared uncompressed length above what deflate can produce (compressed length x 1032) before allocating. Inflate output must equal the declared length. Streams with a preset dictionary (FDICT) are rejected.
+- **Timeouts.** Read timeout and login timeout default to 120 s. The read timeout applies from LOGIN onward on both sides. HANDSHAKE and STATUS keep vanilla's 30 s, so a dead server in the server list still times out as before. The keep-alive timeout defaults to 60 s, with keep-alives still sent every 15 s.
+- **Login compression ordering.** Vanilla enables compression only after the socket accepts the Set Compression packet, but writes Login Success immediately. On a busy socket Login Success could go out uncompressed, and the client disconnected with "Badly compressed packet". Compression is now enabled immediately after Set Compression is written.
+- **Compressor lifetime.** Fixes a leaked native compressor when the connection closes during compression setup, and frees the native memory of replaced deflaters immediately.
+- **FDICT hang.** Velocity's Java inflate loop makes no progress on a stream with a preset dictionary and spins the Netty I/O thread at 100 % CPU, stalling every connection on that thread. Such packets are rejected before inflating.
+- **Buffer ownership.** Login queries and custom payloads are copied to heap buffers so the originals are released.
 
 ### Server security
 
-- **Connection throttle.** Per address, at most 10 new connections per 3 seconds and 8 connections at once that have not reached the game. Over a limit the connection closes as soon as it opens, before any decoding. Loopback and trusted addresses are never limited, and IPv6 counts per /64.
-- **Offence bans.** An address that sends a malformed frame length, an oversized frame, a decompression bomb, an impossible compressed header or a preset-dictionary stream is refused for 60 seconds. No real client sends any of these.
-- **A quiet log.** Refusals are logged once a minute per address and reason, so a flood cannot fill the console.
-- **A block log for fail2ban and CrowdSec** (optional): one line per offence in a fixed format at `logs/aegis-security.log`, with example filter and jail files. Firewall privileges stay outside the game process.
-- **Proxy aware.** With Proxy-Compatible-Forge, BungeeForge or FabricProxy-Lite installed, the throttle and the block log turn themselves off, because every player shares the proxy's address.
+All of this applies to real network connections only, never to singleplayer's in-memory connection. Full reference: [`docs/security.md`](docs/security.md).
+
+- **Connection throttle.** Per source address: a token bucket of 10 new connections, refilled at 10 per 3 s, and at most 8 concurrent connections that have not reached PLAY. A connection over either limit is closed on accept, before any decoding. Loopback and `security.trustedAddresses` (addresses or CIDR) are exempt. IPv6 is keyed on /64. The table is capped at 65,536 tracked addresses; beyond that new addresses pass unthrottled, which bounds memory during a flood.
+- **Offence bans.** A source address is refused for 60 s (`security.offenceBanSeconds`) after any of: malformed frame length, frame over the limit, impossible compressed header or declared size (decompression bomb), preset-dictionary stream. Conforming clients do not send these.
+- **Log rate limiting.** One log line per address and reason per minute, with a repeat count.
+- **Block log** (`security.blockLog`, off by default). Writes `logs/aegis-security.log` from a background thread, at most one line per address and reason every 10 s, in a fixed format. Example fail2ban filter and jail are in [`docs/fail2ban/`](docs/fail2ban/); the same file works with CrowdSec. Firewall changes stay outside the game process.
+- **Proxy detection.** The throttle and block log disable themselves when Proxy-Compatible-Forge, BungeeForge or FabricProxy-Lite is present, since every player then shares the proxy's address. For other proxies, load balancers or NAT, add the address to `security.trustedAddresses`.
 
 ### Compatibility
 
-- **Overlapping modules switch off by themselves** next to Packet Fixer, Connectivity, VMP and Immersive Portals, and `/aegis` (op) lists the active modules, natives, limits and any notes.
-- **Camera mods work:** SecurityCraft cameras, Ars Nouveau scrying and Steam 'n' Rails conductor possession are handled by the entity tracker pre-check.
-- **Tested with** All the Mods 9, Better MC 4 and Valhelsia 6 server packs and the RatPack 2.9 server, on Java 17 and Java 25.
+- Modules that overlap with Packet Fixer, Connectivity, VMP or Immersive Portals disable themselves when those mods are present. `/aegis` (op) lists active modules, native backends, limits and notes.
+- Tested on the All the Mods 9, Better MC 4 and Valhelsia 6 server packs and the RatPack 2.9 server, on Java 17 and 25.
 
 ## Performance
 
-Aegis is built on one rule: **a faster path ships only after a benchmark or an in-game test shows it is faster.** Several ideas were measured or evaluated and not adopted, and the changelog records why.
+A change ships only if a benchmark or an in-game test shows it is faster. Rejected candidates and the reason for each are recorded under "Not adopted" in [`changelog.txt`](changelog.txt).
 
 <p align="center">
   <img src="docs/img/aegis-cost.png" alt="Measured cost of Aegis's packet handlers against vanilla's" width="90%">
 </p>
 
-The figures below are the project's own PipelineBench microbenchmarks: 20,000 packets of a mixed small and chunk-sized workload, against vanilla's handlers, on Windows with Temurin 25 unless noted. They measure the handlers, not a server tick.
+Figures are from PipelineBench, the project's microbenchmark: 20,000 packets, mixed small and chunk-sized, run against vanilla's handlers on Windows with Temurin 25 unless noted. They measure handler cost, not server tick time or client frame rate.
 
-| Metric | Result |
+| Area | Result |
 |---|---|
-| **Frame rate** | No claim. Networking is not on the render thread, and the client-side gain is in handler cost and allocation |
-| **Compression** | Encoder 4.96x and decoder 2.09x faster than vanilla with libdeflate (Windows, Java 25). Linux with velocity-native: 4.4x and 1.9x. Output is 0.4 % smaller than Java's, so speed is not bought with a worse ratio |
-| **Packet framing** | Frame decoder 4.2x faster than vanilla on Java 25 (1.7x on Java 17), length prepender 1.8 to 2x on Windows Java 17, VarInt size about 10x |
-| **Sync** | One flush per connection per tick instead of per packet, at the cost of one volatile read per connection per tick |
-| **Server tick** | No gain claimed. In All the Mods 9 the one-minute median was 14.7 ms as shipped and 14.9 ms with Aegis replacing Packet Fixer, within noise. The 95th percentile read 32.1 and 38.0 ms in single one-minute runs per setup |
-| **Overhead** | `VarInts.write` is about 1 ns slower than vanilla's per packet, and it is used only for Aegis's own length prefix |
-| **Security** | A STATUS connection announcing a 200 MiB frame stayed open for 15 s or more with Packet Fixer and closes in about 3 ms with Aegis |
+| Compression | libdeflate vs vanilla, Windows / Java 25 (FFM): encoder 4.96x, decoder 2.09x. Linux / velocity-native (JNI): 4.4x and 1.9x. Output is 0.4 % smaller than `java.util.zip` at level 6 |
+| Framing | Frame decoder 4.2x (Java 25) and 1.7x (Java 17). Length prepender 1.8-2x (Windows, Java 17). VarInt size about 10x |
+| Flushing | One flush per connection per tick instead of one per packet. Cost: one volatile read per connection per tick |
+| Overhead | `VarInts.write` is about 1 ns per packet slower than vanilla's; it is used only for Aegis's own length prefix |
+| Server tick | No improvement measured. All the Mods 9, single one-minute run per setup: median 14.7 ms (shipped, with Packet Fixer) vs 14.9 ms (Aegis in its place); p95 32.1 ms vs 38.0 ms. With one run each, treat these as noise |
+| Pre-auth frame limit | A STATUS connection announcing a 200 MiB frame stayed open 15 s or longer under Packet Fixer. Aegis closes it in about 3 ms |
 
 ## Roadmap
 
-| Release | Theme | Content |
-|---|---|---|
-| 0.1.x | Pipeline | Krypton, VMP and Packet Fixer merged and fixed, compatibility fixes for the big packs |
-| 0.2.x | Correctness | Login compression order, compressor leak, ping timeout, flush safety net, chunk entity lookup guard |
-| 0.3.0 | Security | Connection throttle, offence bans, block log and fail2ban files |
-| 0.4.0 | Java 25 and Windows | The Java 25 audit, libdeflate on Windows through FFM |
-| 0.5.x | Aegis (**current: 0.5.3**) | The rename from Axial, and the new logo |
-| Next | Experimental | Broadcast memoisation†, only if instrumentation justifies it |
+| Release | Scope |
+|---|---|
+| 0.1.x | Krypton, VMP and Packet Fixer merged and corrected. Compatibility fixes for large packs |
+| 0.2.x | Login compression ordering, compressor leak, read timeout scope, flush safety net, chunk lookup guard |
+| 0.3.0 | Connection throttle, offence bans, block log, fail2ban files |
+| 0.4.0 | Java 25 audit, libdeflate on Windows via FFM |
+| 0.5.x (current: 0.5.3) | Rename from Axial, new logo |
+| Next | Broadcast memoisation†, gated on instrumentation |
 
-Dates are not promised. Each release has a measure-first gate, and an item that fails its gate is dropped and recorded under "Not adopted" in [`changelog.txt`](changelog.txt). Not planned: an io_uring transport (research only), TCP_QUICKACK, replacing velocity-native's JNI, and swapping Minecraft's shared Netty.
+Each release has a measure-first gate. An item that fails it is dropped and recorded in the changelog. No dates are committed.
+
+Not planned:
+
+- **io_uring transport.** Minecraft 1.20.1 ships Netty 4.1.82, shared by every mod; the io_uring transport needs Netty 4.2. Research only.
+- **TCP_QUICKACK.** Linux clears it after the next ACK, so setting it once per socket has little effect.
+- **Replacing velocity-native's JNI.** JNI only produces a warning on Java 24+.
 
 ## Requirements
 
-- Minecraft **1.20.1** with Forge **47.x**
-- Java **17** or newer. Java 22 or newer adds native compression on Windows, and Java 24 and newer print a harmless native-access warning (`--illegal-native-access=allow` removes it)
-- Not compatible with Krypton forks that bundle velocity-native (Krypton Reforged, Krypton Reno), or with the old Axial and RatNetworking jars. Forge stops at loading with a message that names them
+- Minecraft 1.20.1, Forge 47.x
+- Java 17 or newer. Native compression on Windows needs Java 22+. Java 24+ prints a native-access warning; `--illegal-native-access=allow` suppresses it (see [`docs/java.md`](docs/java.md)).
+- Incompatible with Krypton forks that bundle velocity-native (Krypton Reforged, Krypton Reno): two modules export `com.velocitypowered.natives` and module resolution fails. Also incompatible with the old Axial and RatNetworking jars, which patch the same code. Forge stops at load with a message naming the conflicting mod.
 
 ## Installation
 
-1. Remove Krypton Reforged or Krypton Reno, Axial or RatNetworking, and Packet Fixer if you have them (Packet Fixer can stay, but Aegis then turns its overlapping modules off).
-2. Place `aegis-1.20.1-<version>.jar` in `mods` on the server and on clients.
-3. Options are in `config/aegis.properties`, copied from `axial.properties` or `ratnetworking.properties` on the first start if one exists. Every module can be turned off.
+1. Remove Krypton Reforged / Krypton Reno, Axial / RatNetworking, and optionally Packet Fixer. If Packet Fixer stays, Aegis disables its overlapping modules.
+2. Put `aegis-1.20.1-<version>.jar` in `mods` on the server, the clients, or both.
+3. Configuration is `config/aegis.properties`. On first start it is seeded from `axial.properties` or `ratnetworking.properties` if either exists. Every module has an on/off switch.
 
 ## Building
 
@@ -98,19 +135,24 @@ Dates are not promised. Each release has a measure-first gate, and an item that 
 ./gradlew build
 ```
 
-It needs a JDK 17 and writes `build/libs/aegis-1.20.1-<version>.jar`. `./gradlew test` runs the unit tests with Netty's leak detector at paranoid level.
+Requires JDK 17. Output: `build/libs/aegis-1.20.1-<version>.jar`. `./gradlew test` runs the unit tests with Netty's leak detector at `paranoid`.
 
 ## Licence and attribution
 
-- Aegis is licensed under the **GNU General Public License v3.0 or later** ([`LICENSE`](LICENSE)). Copyright (C) 2026 SolarBiscuit.
-- It contains code derived from, or bundles, the works below. Their licence texts are in [`licenses/`](licenses/) and in the jar, and [`NOTICE`](NOTICE) says what is used from each:
-  - **Krypton** by Andrew Steinborn and contributors, LGPL-3.0.
-  - **VMP (Very Many Players)** by ishland, MIT.
-  - **Packet Fixer** by TonimatasDEV, MIT.
-  - **velocity-native 3.4.0** by the Velocity contributors, GPL-3.0, bundled unmodified as a jar-in-jar. It contains libdeflate and links against the system's OpenSSL.
-  - **libdeflate 1.26** by Eric Biggers and Google LLC, MIT, bundled unmodified as the official Windows x86_64 build.
-- Aegis is an independent project. It is not affiliated with, endorsed by, or supported by Mojang Studios, Microsoft, Minecraft Forge, or the authors of the mods above.
+Aegis is GPL-3.0-or-later ([`LICENSE`](LICENSE)). Copyright (C) 2026 SolarBiscuit.
 
-## Reporting issues
+Derived or bundled components. Licence texts are in [`licenses/`](licenses/) and the jar; [`NOTICE`](NOTICE) lists what is used from each.
 
-Issues belong in the [Aegis issue tracker](https://github.com/SolarBiscuit/AegisNetworking/issues). Please include the Aegis version, your Java version, the other networking mods you run, and `latest.log`. The output of `/aegis` helps.
+| Component | Author | Licence | Use |
+|---|---|---|---|
+| Krypton | Andrew Steinborn and contributors | LGPL-3.0 | Derived code |
+| VMP | ishland | MIT | Derived code |
+| Packet Fixer | TonimatasDEV | MIT | Derived code |
+| velocity-native 3.4.0 | Velocity contributors | GPL-3.0 | Bundled unmodified (jar-in-jar). Contains libdeflate and links against the system OpenSSL |
+| libdeflate 1.26 | Eric Biggers, Google LLC | MIT | Bundled unmodified (official Windows x86_64 build) |
+
+Aegis is an independent project, not affiliated with or endorsed by Mojang Studios, Microsoft, Minecraft Forge, or the authors above.
+
+## Issues
+
+[Aegis issue tracker](https://github.com/SolarBiscuit/AegisNetworking/issues). Include the Aegis and Java versions, the other networking mods installed, `latest.log` and the output of `/aegis`.

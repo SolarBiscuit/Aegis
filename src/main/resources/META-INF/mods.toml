@@ -6,13 +6,15 @@ license = "${mod_license}"
 modId = "${mod_id}"
 version = "${mod_version}"
 displayName = "${mod_name}"
+# Shown in the Forge mod list (a dark screen), so this is the light-on-dark variant; docs/logo has both.
+logoFile = "aegis_logo.png"
 authors = "${mod_authors}"
 credits = "Based on Krypton (Andrew Steinborn, LGPL-3.0), VMP (ishland, MIT), Packet Fixer (TonimatasDEV, MIT) and velocity-native (Velocity contributors, GPL-3.0)."
 description = '''
 ${mod_description}
 '''
 # Optional on either side: everything on the wire stays vanilla-compatible. Only packets above the vanilla size limits
-# need RatNetworking (or Packet Fixer) on the receiving side.
+# need Aegis (or Packet Fixer) on the receiving side.
 displayTest = "IGNORE_ALL_VERSION"
 
 [[dependencies."${mod_id}"]]
@@ -32,8 +34,8 @@ side = "BOTH"
 # Incompatible: Krypton forks bundle their own copy of velocity-native (Krypton Reforged shades it, Krypton Reno nests
 # it under another group id), and two modules exporting com.velocitypowered.natives stop Java from starting at all,
 # with an error that names neither mod. Forge 47 has no "incompatible" type; an optional dependency no version
-# satisfies makes FML log "Unsupported installed optional dependencies: Mod ID 'kreno', Requested by 'ratnetworking'"
-# just before that crash (the module layer is still built first). RatNetworking includes Krypton's optimizations,
+# satisfies makes FML log "Unsupported installed optional dependencies: Mod ID 'kreno', Requested by 'aegis'"
+# just before that crash (the module layer is still built first). Aegis includes Krypton's optimizations,
 # so remove the Krypton fork.
 [[dependencies."${mod_id}"]]
 modId = "krypton"
@@ -44,6 +46,23 @@ side = "BOTH"
 
 [[dependencies."${mod_id}"]]
 modId = "kreno"
+mandatory = false
+versionRange = "(,0)"
+ordering = "NONE"
+side = "BOTH"
+
+# Aegis was called Axial (0.2.0-0.4.0) and RatNetworking (up to 0.1.2). An old jar under either name left next to Aegis
+# would patch the same code twice; the same "no version satisfies" trick makes FML stop with an error naming it.
+# Remove the old jar.
+[[dependencies."${mod_id}"]]
+modId = "axial"
+mandatory = false
+versionRange = "(,0)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies."${mod_id}"]]
+modId = "ratnetworking"
 mandatory = false
 versionRange = "(,0)"
 ordering = "NONE"

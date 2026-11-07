@@ -1,0 +1,50 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.solarbiscuit.aegis.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "aegis.refmap.json",
+  "plugin": "com.solarbiscuit.aegis.mixin.AegisMixinPlugin",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "mixins": [
+    "access.CompressionDecoderAccessor",
+    "access.CompressionEncoderAccessor",
+    "access.EntitySectionAccessor",
+    "access.EntitySectionStorageAccessor",
+    "access.PersistentEntitySectionManagerAccessor",
+    "access.ServerLevelAccessor",
+    "compression.ConnectionCompressionMixin",
+    "disconnect.ConnectionDisconnectMixin",
+    "encryption.ConnectionEncryptionMixin",
+    "encryption.ServerLoginPacketListenerImplMixin",
+    "flush.ChunkMapFlushMixin",
+    "flush.ConnectionFlushMixin",
+    "flush.ServerChunkCacheFlushMixin",
+    "frame.ConnectionSerializationMixin",
+    "leaks.ClientboundCustomPayloadPacketHeapCopyMixin",
+    "leaks.ClientboundCustomQueryPacketHeapCopyMixin",
+    "leaks.LegacyQueryHandlerMixin",
+    "leaks.ServerboundCustomPayloadPacketHeapCopyMixin",
+    "leaks.ServerboundCustomQueryPacketHeapCopyMixin",
+    "limits.ClientboundCustomPayloadPacketLimitMixin",
+    "limits.ClientboundCustomQueryPacketLimitMixin",
+    "limits.ClientboundLevelChunkPacketDataLimitMixin",
+    "limits.FriendlyByteBufLimitsMixin",
+    "limits.PacketEncoderLimitMixin",
+    "limits.ServerboundCustomPayloadPacketLimitMixin",
+    "limits.ServerboundCustomQueryPacketLimitMixin",
+    "login.ServerLoginCompressionOrderMixin",
+    "security.ConnectionThrottleMixin",
+    "timeouts.ConnectionReadTimeoutMixin",
+    "timeouts.KeepAliveTimeoutMixin",
+    "timeouts.ServerLoginTimeoutMixin",
+    "tracking.ChunkMapEntityLookupMixin",
+    "tracking.ChunkMapTrackingMixin",
+    "varint.FriendlyByteBufVarIntMixin"
+  ],
+  "client": [
+    "encryption.ClientHandshakePacketListenerImplMixin"
+  ]
+}

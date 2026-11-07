@@ -67,6 +67,8 @@ minecraft {
 
         // Headless self-test: `gradlew runGameTestServer` runs src/gametest and exits.
         gameTestServer {
+            // Own directory, so it does not fail on the world lock of a dev server running in run/.
+            workingDirectory project.file('run-gametest')
             property 'forge.enabledGameTestNamespaces', mod_id
             mods {
                 "${mod_id}" {
@@ -159,16 +161,32 @@ reobf {
 
 tasks.named('build').configure { dependsOn 'jarJar' }
 
+// `-PdevJava=25` runs the dev client/server on another installed JDK (the FFM libdeflate backend needs Java 22+).
+if (project.hasProperty('devJava')) {
+    tasks.matching { it.name == 'runServer' || it.name == 'runClient' }.configureEach {
+        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(project.property('devJava') as int) }
+        jvmArgs '--sun-misc-unsafe-memory-access=allow', '--illegal-native-access=allow'
+    }
+}
+
 tasks.named('test', Test).configure {
     useJUnitPlatform()
     maxHeapSize = '1g'
-    // RNConfig writes config/ratnetworking.properties into the working directory.
+    // AegisConfig writes config/aegis.properties into the working directory.
     def testRun = layout.buildDirectory.dir('test-run').get().asFile
     workingDir = testRun
     doFirst { testRun.mkdirs() }
-    systemProperty 'io.netty.leakDetection.level', System.getProperty('ratnetworking.bench') ? 'disabled' : 'paranoid'
-    if (System.getProperty('ratnetworking.bench')) {
-        systemProperty 'ratnetworking.bench', System.getProperty('ratnetworking.bench')
+    systemProperty 'io.netty.leakDetection.level', System.getProperty('aegis.bench') ? 'disabled' : 'paranoid'
+    // `-PtestJava=25` runs the tests on another installed JDK (the FFM libdeflate backend needs Java 22+);
+    // `-PtestJvmArgs="--illegal-native-access=deny"` adds JVM flags, e.g. to check the fallback to Java.
+    if (project.hasProperty('testJava')) {
+        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(project.property('testJava') as int) }
+    }
+    if (project.hasProperty('testJvmArgs')) {
+        jvmArgs((project.property('testJvmArgs') as String).split(' ').findAll { !it.isEmpty() })
+    }
+    if (System.getProperty('aegis.bench')) {
+        systemProperty 'aegis.bench', System.getProperty('aegis.bench')
         testLogging.showStandardStreams = true
         outputs.upToDateWhen { false }
     }
