@@ -4,11 +4,9 @@
 
 # Aegis
 
-Network stack optimisations, defect fixes and server-side connection hardening for Minecraft 1.20.1 (Forge 47.x).
+Network stack optimizations, defect fixes and server-side connection hardening for Minecraft 1.20.1 (Forge 47.x).
 
 Aegis consolidates and corrects the networking changes in [Krypton](https://github.com/astei/krypton), [VMP](https://github.com/RelativityMC/VMP-fabric) and [Packet Fixer](https://github.com/TonimatasDEV/PacketFixer), and adds per-address connection limiting, which vanilla 1.20.1 does not have. It registers no network channels and does not change the protocol.
-
-Formerly RatNetworking, then Axial (before 0.5.0).
 
 ## Deployment
 
@@ -54,8 +52,8 @@ Items marked † are experimental. Each is benchmarked first, ships disabled, an
 
   | Direction | Limit | Applies |
   |---|---|---|
-  | Clientbound | 128 MiB | All protocol states (Forge syncs registries during login) |
-  | Serverbound | 16 MiB | PLAY only. HANDSHAKE, STATUS and LOGIN keep vanilla's 2 MiB frame / 8 MiB uncompressed |
+  | Client-bound | 128 MiB | All protocol states (Forge syncs registries during login) |
+  | Server-bound | 16 MiB | PLAY only. HANDSHAKE, STATUS and LOGIN keep vanilla's 2 MiB frame / 8 MiB uncompressed |
 
 - **Decompression.** Rejects a declared uncompressed length above what deflate can produce (compressed length x 1032) before allocating. Inflate output must equal the declared length. Streams with a preset dictionary (FDICT) are rejected.
 - **Timeouts.** Read timeout and login timeout default to 120 s. The read timeout applies from LOGIN onward on both sides. HANDSHAKE and STATUS keep vanilla's 30 s, so a dead server in the server list still times out as before. The keep-alive timeout defaults to 60 s, with keep-alives still sent every 15 s.
