@@ -66,7 +66,7 @@ Items marked † are experimental. Each is benchmarked first, ships disabled, an
 All of this applies to real network connections only, never to singleplayer's in-memory connection. Full reference: [`docs/security.md`](docs/security.md).
 
 - **Connection throttle.** Per source address: a token bucket of 10 new connections, refilled at 10 per 3 s, and at most 8 concurrent connections that have not reached PLAY. A connection over either limit is closed on accept, before any decoding. Loopback and `security.trustedAddresses` (addresses or CIDR) are exempt. IPv6 is keyed on /64. The table is capped at 65,536 tracked addresses; beyond that new addresses pass unthrottled, which bounds memory during a flood.
-- **Offence bans.** A source address is refused for 60 s (`security.offenceBanSeconds`) after any of: malformed frame length, frame over the limit, impossible compressed header or declared size (decompression bomb), preset-dictionary stream. Conforming clients do not send these.
+- **Offense bans.** A source address is refused for 60 s (`security.offenceBanSeconds`) after any of: malformed frame length, frame over the limit, impossible compressed header or declared size (decompression bomb), preset-dictionary stream. Conforming clients do not send these.
 - **Log rate limiting.** One log line per address and reason per minute, with a repeat count.
 - **Block log** (`security.blockLog`, off by default). Writes `logs/aegis-security.log` from a background thread, at most one line per address and reason every 10 s, in a fixed format. Example fail2ban filter and jail are in [`docs/fail2ban/`](docs/fail2ban/); the same file works with CrowdSec. Firewall changes stay outside the game process.
 - **Proxy detection.** The throttle and block log disable themselves when Proxy-Compatible-Forge, BungeeForge or FabricProxy-Lite is present, since every player then shares the proxy's address. For other proxies, load balancers or NAT, add the address to `security.trustedAddresses`.
@@ -104,11 +104,7 @@ Each release has a measure-first gate. An item that fails it is dropped and reco
 
 - Minecraft 1.20.1, Forge 47.x
 - Java 17 or newer. Native compression on Windows needs Java 22+. Java 24+ prints a native-access warning; `--illegal-native-access=allow` suppresses it (see [`docs/java.md`](docs/java.md)).
- 
-## Install
-
-- Java 17 or newer. Native compression on Windows needs Java 22+. Java 24+ prints a native-access warning; `--illegal-native-access=allow` suppresses it (see [`docs/java.md`](docs/java.md)).
-- Configuration is `config/aegis.properties`. On first start it is seeded from `axial.properties` or `ratnetworking.properties` if either exists. Every module has an on/off switch.
+ - Configuration is `config/aegis.properties`. On first start it is seeded from `axial.properties` or `ratnetworking.properties` if either exists. Every module has an on/off switch.
 
 ## Build
 
@@ -117,13 +113,13 @@ Each release has a measure-first gate. An item that fails it is dropped and reco
 ```
 Requires JDK 17. Output: `build/libs/aegis-1.20.1-<version>.jar`. `./gradlew test` runs the unit tests with Netty's leak detector at `paranoid`.
 
-## Licence and attribution
+## License and attribution
 
 Aegis is GPL-3.0-or-later ([`LICENSE`](LICENSE)). Copyright (C) 2026 SolarBiscuit.
 
 Derived or bundled components. Licence texts are in [`licenses/`](licenses/) and the jar; [`NOTICE`](NOTICE) lists what is used from each.
 
-| Component | Author | Licence | Use |
+| Component | Author | License | Use |
 |---|---|---|---|
 | Krypton | Andrew Steinborn and contributors | LGPL-3.0 | Derived code |
 | VMP | ishland | MIT | Derived code |
