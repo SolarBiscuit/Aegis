@@ -33,7 +33,6 @@ Items marked † are experimental. Each is benchmarked first, ships disabled, an
   |---|---|
   | Linux x86_64 / aarch64, macOS arm64 | libdeflate via velocity-native (JNI) |
   | Windows x64, Java 22+ | libdeflate 1.26 via the FFM API |
-  | Other | `java.util.zip` |
 
   A native load failure falls back to `java.util.zip` and logs once. `pipeline.natives=false` disables native code.
 - **VarInt size** from a lookup table. Per-packet allocation in the frame decoder and the compression handlers is 83-96 % lower than vanilla.
