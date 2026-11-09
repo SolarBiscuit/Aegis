@@ -75,6 +75,7 @@ All of this applies to real network connections only, never to singleplayer's in
 
 - Modules that overlap with Packet Fixer, Connectivity, VMP or Immersive Portals disable themselves when those mods are present. `/aegis` (op) lists active modules, native backends, limits and notes.
 - Tested on the All the Mods 9, Better MC 4 and Valhelsia 6 server packs and the RatPack 2.9 server, on Java 17 and 25.
+- Incompatible with Krypton forks that bundle velocity-native (Krypton Reforged, Krypton Reno): two modules export `com.velocitypowered.natives` and module resolution fails. Forge stops at load with a message naming the conflicting mod.
 
 ## Performance
 
@@ -95,43 +96,25 @@ Figures are from PipelineBench, the project's microbenchmark: 20,000 packets, mi
 | Server tick | No improvement measured. All the Mods 9, single one-minute run per setup: median 14.7 ms (shipped, with Packet Fixer) vs 14.9 ms (Aegis in its place); p95 32.1 ms vs 38.0 ms. With one run each, treat these as noise |
 | Pre-auth frame limit | A STATUS connection announcing a 200 MiB frame stayed open 15 s or longer under Packet Fixer. Aegis closes it in about 3 ms |
 
-## Roadmap
-
-| Release | Scope |
-|---|---|
-| 0.1.x | Krypton, VMP and Packet Fixer merged and corrected. Compatibility fixes for large packs |
-| 0.2.x | Login compression ordering, compressor leak, read timeout scope, flush safety net, chunk lookup guard |
-| 0.3.0 | Connection throttle, offence bans, block log, fail2ban files |
-| 0.4.0 | Java 25 audit, libdeflate on Windows via FFM |
-| 0.5.x (current: 0.5.3) | Rename from Axial, new logo |
-| Next | Broadcast memoisation†, gated on instrumentation |
 
 Each release has a measure-first gate. An item that fails it is dropped and recorded in the changelog. No dates are committed.
 
-Not planned:
-
-- **io_uring transport.** Minecraft 1.20.1 ships Netty 4.1.82, shared by every mod; the io_uring transport needs Netty 4.2. Research only.
-- **TCP_QUICKACK.** Linux clears it after the next ACK, so setting it once per socket has little effect.
-- **Replacing velocity-native's JNI.** JNI only produces a warning on Java 24+.
 
 ## Requirements
 
 - Minecraft 1.20.1, Forge 47.x
 - Java 17 or newer. Native compression on Windows needs Java 22+. Java 24+ prints a native-access warning; `--illegal-native-access=allow` suppresses it (see [`docs/java.md`](docs/java.md)).
-- Incompatible with Krypton forks that bundle velocity-native (Krypton Reforged, Krypton Reno): two modules export `com.velocitypowered.natives` and module resolution fails. Also incompatible with the old Axial and RatNetworking jars, which patch the same code. Forge stops at load with a message naming the conflicting mod.
+ 
+## Install
 
-## Installation
+- Java 17 or newer. Native compression on Windows needs Java 22+. Java 24+ prints a native-access warning; `--illegal-native-access=allow` suppresses it (see [`docs/java.md`](docs/java.md)).
+- Configuration is `config/aegis.properties`. On first start it is seeded from `axial.properties` or `ratnetworking.properties` if either exists. Every module has an on/off switch.
 
-1. Remove Krypton Reforged / Krypton Reno, Axial / RatNetworking, and optionally Packet Fixer. If Packet Fixer stays, Aegis disables its overlapping modules.
-2. Put `aegis-1.20.1-<version>.jar` in `mods` on the server, the clients, or both.
-3. Configuration is `config/aegis.properties`. On first start it is seeded from `axial.properties` or `ratnetworking.properties` if either exists. Every module has an on/off switch.
-
-## Building
+## Build
 
 ```bash
 ./gradlew build
 ```
-
 Requires JDK 17. Output: `build/libs/aegis-1.20.1-<version>.jar`. `./gradlew test` runs the unit tests with Netty's leak detector at `paranoid`.
 
 ## Licence and attribution
